@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zihinsel Odaklanma Testi</title>
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <style>
+        :root {
+            --bg-color: #0a0a0a;
+            --panel-bg: #111111;
+            --text-color: #e10029;
+            --border-color: #e10029;
+        }
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+            user-select: none;
+            transition: filter 0.05s ease;
+        }
+        #main-container {
+            background: var(--panel-bg);
+            padding: 40px;
+            border: 1px solid var(--border-color);
+            width: 85%;
+            max-width: 600px;
+            min-height: 380px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .info-panel {
+            width: 100%;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 15px;
+            font-size: 1rem;
+            display: flex;
+            justify-content: space-between;
+            color: #e10029;
+        }
+        #display-box {
+            font-size: 3.5rem;
+            font-weight: bold;
+            margin: 40px 0;
+            min-height: 140px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            width: 100%;
+            transition: transform 0.05s ease, font-size 0.05s ease;
+        }
+        #input-area {
+            margin-top: 20px;
+            width: 100%;
+        }
+        input[type="text"] {
+            background: #000;
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+            padding: 12px;
+            font-size: 1.8rem;
+            border-radius: 4px;
+            text-align: center;
+            width: 250px;
+            outline: none;
+        }
+        input[type="text"]:focus {
+            border-color: #e10029;
+        }
+        button {
+            background: #e10029;
+            color: #000000;
+            border: none;
+            padding: 12px 40px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 20px;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+        button:hover {
+            background: #cccccc;
+        }
+        #message-log {
+            font-size: 1rem;
+            width: 100%;
+            text-align: center;
+            border-top: 1px solid var(--border-color);
+            padding-top: 15px;
+            min-height: 30px;
+        }
+        #timer-bar {
+            width: 100%;
+            height: 4px;
+            background: #ff3333;
+            width: 0%;
+            transition: width 0.1s linear;
+            margin-top: 10px;
+        }
+        .success { color: #00ff66; }
+        .error { color: #ff3333; }
+    </style>
+</head>
+<body>
+
+<div id="main-container">
+    <div class="info-panel">
+        <div>Seviye: <span id="level-val" style="color: var(--text-color);">1</span></div>
+        <div>Mod: <span id="mode-val" style="color: var(--text-color);">-</span></div>
+    </div>
+
+    <div id="display-box">Başlamaya Hazır</div>
+
+    <div id="input-area" style="display: none;">
+        <input type="text" id="user-answer" placeholder="Cevap" autocomplete="off">
+        <div id="timer-bar"></div>
+        <br>
+        <button onclick="checkAnswer()">Gönder</button>
+    </div>
+
+    <button id="action-btn" onclick="startLevel()">Başlat</button>
+
+    <div id="message-log"></div>
+</div>
+
+<script>
+    let currentLevel = 1;
+    let sequence = [];
+    let finalAnswer = 0;
+    let displayIndex = 0;
+    let stepDuration = 1500;
+
+    let audioCtx = null;
+    let noiseNode = null;
+    let noiseFilter = null;
+    let glitchInterval = null;
+    let visualChaosInterval = null;
+    let bbeatsLeft = null;
+    let bbeatsRight = null;
+
+    let answerTimeout = null;
+    let timerInterval = null;
+
+    const wordsTR = {3:"ÜÇ", 4:"DÖRT", 5:"BEŞ", 6:"ALTI", 7:"YEDİ", 8:"SEKİZ", 9:"DOKUZ", 10:"ON"};
+    const romans = {3:"III", 4:"IV", 5:"V", 6:"VI", 7:"VII", 8:"VIII", 9:"IX", 10:"X"};
+
+    function getLevelConfig(level) {
+        let mode = "";
+        let count = 4 + Math.floor(level / 1.5);
+        let duration = Math.max(250, 1600 - (level * 110));
+
+        if (level <= 4) {
+            mode = "Değişken Sembollü Toplama";
+        } else if (level <= 8) {
+            mode = "Geriye Doğru (1-Back) Hafıza";
+        } else if (level <= 14) {
+            mode = "Çarpma / Modüler";
+        } else {
+            mode = "Matris / Analiz";
+        }
+        return { mode, count, duration };
+    }
+
+    function updateUI() {
+        let config = getLevelConfig(currentLevel);
+        document.getElementById('level-val').innerText = currentLevel;
+        document.getElementById('mode-val').innerText = config.mode;
+    }
+
+    function startAudioSabotage() {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+
+        // --- Katman 1: Binaural Sapma Motoru (Kulaklıklar için sol-sağ farklı frekans) ---
+        let baseFreq = 150;
+        let offsetFreq = 10 + Math.random() * 15; // Beyin dalgalarını bozan alfa-beta kırılması
+
+        bbeatsLeft = audioCtx.createOscillator();
+        bbeatsRight = audioCtx.createOscillator();
+        let pannerLeft = audioCtx.createStereoPanner ? audioCtx.createStereoPanner() : null;
+        let pannerRight = audioCtx.createStereoPanner ? audioCtx.createStereoPanner() : null;
+        let bbeatsGain = audioCtx.createGain();
+        bbeatsGain.gain.value = 0.05;
+
+        bbeatsLeft.frequency.setValueAtTime(baseFreq, audioCtx.currentTime);
+        bbeatsRight.frequency.setValueAtTime(baseFreq + offsetFreq, audioCtx.currentTime);
+
+        if(pannerLeft && pannerRight) {
+            pannerLeft.pan.setValueAtTime(-1, audioCtx.currentTime);
+            pannerRight.pan.setValueAtTime(1, audioCtx.currentTime);
+            bbeatsLeft.connect(pannerLeft).connect(bbeatsGain);
+            bbeatsRight.connect(pannerRight).connect(bbeatsGain);
+        } else {
+            bbeatsLeft.connect(bbeatsGain);
+            bbeatsRight.connect(bbeatsGain);
+        }
+        bbeatsGain.connect(audioCtx.destination);
+        bbeatsLeft.start(); bbeatsRight.start();
+
+        // --- Katman 2: Dinamik Filtreli Pembe/Kahverengi Parazit ---
+        noiseFilter = audioCtx.createBiquadFilter();
+        noiseFilter.type = 'peaking';
+        noiseFilter.frequency.setValueAtTime(1000, audioCtx.currentTime);
+
+        let bufferSize = 2 * audioCtx.sampleRate,
+            noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate),
+            output = noiseBuffer.getChannelData(0);
+
+        let lastOut = 0.0;
+        for (let i = 0; i < bufferSize; i++) {
+            let white = Math.random() * 2 - 1;
+            output[i] = (lastOut + (0.02 * white)) / 1.02;
+            lastOut = output[i];
+            output[i] *= 3.5;
+        }
+
+        noiseNode = audioCtx.createBufferSource();
+        noiseNode.buffer = noiseBuffer;
+        noiseNode.loop = true;
+
+        let gainNode = audioCtx.createGain();
+        gainNode.gain.value = 0.06;
+
+        noiseNode.connect(noiseFilter);
+        noiseFilter.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        noiseNode.start();
+
+        // --- Katman 3: Rastgele Glitch Sentezleyicisi ---
+        glitchInterval = setInterval(() => {
+            noiseFilter.frequency.setValueAtTime(Math.random() * 2000 + 200, audioCtx.currentTime);
+            if(Math.random() > 0.3) {
+                let osc = audioCtx.createOscillator();
+                let oscGain = audioCtx.createGain();
+                let types = ['sawtooth', 'square', 'triangle', 'sine'];
+                osc.type = types[Math.floor(Math.random() * types.length)];
+
+                if (Math.random() > 0.5) {
+                    osc.frequency.setValueAtTime(Math.random() * 4000 + 2000, audioCtx.currentTime);
+                } else {
+                    osc.frequency.setValueAtTime(Math.random() * 80 + 30, audioCtx.currentTime);
+                }
+                oscGain.gain.setValueAtTime(Math.random() * 0.09 + 0.02, audioCtx.currentTime);
+                oscGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + (Math.random() * 0.2 + 0.05));
+                osc.connect(oscGain);
+                oscGain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.25);
+            }
+        }, 90);
+    }
+
+    function stopAudioSabotage() {
+        if (noiseNode) { try { noiseNode.stop(); } catch(e){} }
+        if (bbeatsLeft) { try { bbeatsLeft.stop(); } catch(e){} }
+        if (bbeatsRight) { try { bbeatsRight.stop(); } catch(e){} }
+        clearInterval(glitchInterval);
+    }
+
+    function startVisualSabotage() {
+        visualChaosInterval = setInterval(() => {
+            if(Math.random() > 0.4) {
+                let r = Math.floor(Math.random() * 50);
+                let g = Math.floor(Math.random() * 50);
+                let b = Math.floor(Math.random() * 50);
+                document.body.style.backgroundColor = `rgb(${r}, ${g}, ${b})`;
+                document.getElementById('main-container').style.borderColor = Math.random() > 0.5 ? '#ff3333' : '#222222';
+            }
+            if(Math.random() > 0.93) {
+                document.body.style.filter = "invert(1)";
+                setTimeout(() => { document.body.style.filter = "invert(0)"; }, 40);
+            }
+        }, 60);
+    }
+
+    function stopVisualChaos() {
+        clearInterval(visualChaosInterval);
+        document.body.style.backgroundColor = "var(--bg-color)";
+        document.getElementById('main-container').style.borderColor = "var(--border-color)";
+        document.getElementById('display-box').style.color = "var(--text-color)";
+        document.getElementById('display-box').style.transform = "none";
+        document.body.style.filter = "none";
+    }
+
+    function generateSequence() {
+        sequence = [];
+        let config = getLevelConfig(currentLevel);
+        finalAnswer = 0;
+
+        if (currentLevel <= 4) {
+            // Seviye 1-4: Sayı biçimleri rastgele kelime, roma rakamı veya normal rakam gelir
+            for(let i=0; i<config.count; i++) {
+                let num = Math.floor(Math.random() * 8) + 3; // 3-10 arası
+                let type = Math.floor(Math.random() * 3);
+                let textStr = "";
+
+                if(type === 0) textStr = `+ ${num}`;
+                if(type === 1) textStr = `+ ${wordsTR[num]}`;
+                if(type === 2) textStr = `+ ${romans[num]}`;
+
+                if(Math.random() > 0.5 && type === 0) {
+                    sequence.push({ text: `- ${num}`, val: -num });
+                } else {
+                    sequence.push({ text: textStr, val: num });
+                }
+            }
+        }
+        else if (currentLevel <= 8) {
+            // Seviye 5-8: 1-Back Modu. Mevcut sayı ekrana gelir ama hafızadaki bir önceki eklenir
+            for(let i=0; i<config.count; i++) {
+                let num = Math.floor(Math.random() * 15) + 2;
+                sequence.push({ text: `+ ${num}`, val: num });
+            }
+        }
+        else if (currentLevel <= 14) {
+            let initVal = Math.floor(Math.random() * 6) + 4;
+            sequence.push({ text: `${initVal}`, val: initVal, type: 'set' });
+            for(let i=1; i<config.count; i++) {
+                if(Math.random() > 0.4) {
+                    let m = Math.floor(Math.random() * 3) + 2;
+                    sequence.push({ text: `\\times ${m}`, mathjax: true, val: m, type: 'mult' });
+                } else {
+                    let mod = Math.random() > 0.5 ? 5 : 6;
+                    sequence.push({ text: `\\pmod{${mod}}`, mathjax: true, val: mod, type: 'mod' });
+                }
+            }
+        }
+        else {
+            for(let i=0; i<config.count; i++) {
+                let type = Math.floor(Math.random() * 3);
+                if (type === 0) {
+                    let a = Math.floor(Math.random() * 4), b = Math.floor(Math.random() * 4);
+                    let c = Math.floor(Math.random() * 4), d = Math.floor(Math.random() * 4);
+                    sequence.push({ text: `\\det \\begin{pmatrix} ${a} & ${b} \\\\ ${c} & ${d} \\end{pmatrix}`, mathjax: true, val: ((a*d) - (b*c)) });
+                } else if (type === 1) {
+                    let r = Math.floor(Math.random() * 4) + 1;
+                    let img = Math.floor(Math.random() * 3) + 1;
+                    sequence.push({ text: `( ${r} + ${img}i )( ${r} - ${img}i )`, mathjax: true, val: (r*r + img*img) });
+                } else {
+                    let point = Math.floor(Math.random() * 3) + 1;
+                    sequence.push({ text: `\\frac{d}{dx}(2x^2 - 3x) \\rightarrow x=${point}`, mathjax: true, val: (4 * point - 3) });
+                }
+            }
+        }
+
+        // Nihai Cevap Hesaplama Ayrımı
+        if (currentLevel >= 5 && currentLevel <= 8) {
+            // 1-Back Mekaniği: İlk sayı işlenmez, her adım bir sonrakini tetikler.
+            let nBackCalculated = 0;
+            for(let i=1; i<sequence.length; i++) {
+                nBackCalculated += sequence[i-1].val; // i anında i-1'i topluyoruz
+            }
+            finalAnswer = nBackCalculated;
+        } else if (currentLevel > 8 && currentLevel <= 14) {
+            let currentCalculated = sequence[0].val;
+            for(let i=1; i<sequence.length; i++) {
+                if(sequence[i].type === 'mult') currentCalculated *= sequence[i].val;
+                if(sequence[i].type === 'mod') currentCalculated = currentCalculated % sequence[i].val;
+            }
+            finalAnswer = currentCalculated;
+        } else {
+            finalAnswer = sequence.reduce((acc, obj) => acc + (obj.val || 0), 0);
+        }
+    }
+
+    function startLevel() {
+        clearTimeout(answerTimeout);
+        clearInterval(timerInterval);
+        document.getElementById('action-btn').style.display = 'none';
+        document.getElementById('input-area').style.display = 'none';
+        document.getElementById('user-answer').value = '';
+        document.getElementById('message-log').innerText = "";
+        document.getElementById('timer-bar').style.width = '0%';
+
+        updateUI();
+        generateSequence();
+
+        displayIndex = 0;
+        stepDuration = getLevelConfig(currentLevel).duration;
+
+        startAudioSabotage();
+        startVisualSabotage();
+
+        showNextElement();
+    }
+
+    function showNextElement() {
+        let box = document.getElementById('display-box');
+
+        if (displayIndex < sequence.length) {
+            let item = sequence[displayIndex];
+
+            box.style.fontSize = `${Math.random() * 1.5 + 3}rem`;
+            box.style.color = Math.random() > 0.5 ? "#ff3333" : "#33ff33";
+            box.style.transform = `rotate(${Math.random() * 10 - 5}deg) translate(${Math.random() * 10 - 5}px)`;
+
+            if (item.mathjax) {
+                box.innerHTML = `$$ ${item.text} $$`;
+                MathJax.typesetPromise([box]);
+            } else {
+                box.innerText = item.text;
+            }
+
+            displayIndex++;
+
+            let jitter = (Math.random() * 0.3 - 0.15) * stepDuration;
+            let currentStepDuration = Math.max(150, stepDuration + jitter);
+
+            setTimeout(() => {
+                box.innerText = "";
+                box.style.transform = "none";
+                setTimeout(showNextElement, 70);
+            }, currentStepDuration);
+
+        } else {
+            stopAudioSabotage();
+            stopVisualChaos();
+
+            box.style.fontSize = "3.5rem";
+            box.innerText = "?";
+            document.getElementById('input-area').style.display = 'block';
+            document.getElementById('user-answer').focus();
+
+            // Sınırlı Süre Başlatıcı (Zaman Baskısı Cezası)
+            startResponseTimer();
+        }
+    }
+
+    function startResponseTimer() {
+        let timeLimit = Math.max(2500, 6000 - (currentLevel * 250)); // Seviye arttıkça cevaplama süresi düşer (En az 2.5 sn)
+        let elapsed = 0;
+        let bar = document.getElementById('timer-bar');
+
+        bar.style.width = '100%';
+
+        timerInterval = setInterval(() => {
+            elapsed += 100;
+            let percentage = 100 - ((elapsed / timeLimit) * 100);
+            bar.style.width = `${percentage}%`;
+        }, 100);
+
+        answerTimeout = setTimeout(() => {
+            clearInterval(timerInterval);
+            let logBox = document.getElementById('message-log');
+            logBox.className = "error";
+            logBox.innerText = `Süre bitti. Doğru cevap: ${finalAnswer}. Seviye 1'e dönülüyor.`;
+            currentLevel = 1;
+            resetToNextLoop();
+        }, timeLimit);
+    }
+
+    function checkAnswer() {
+        clearTimeout(answerTimeout);
+        clearInterval(timerInterval);
+
+        let userAns = parseFloat(document.getElementById('user-answer').value);
+        let logBox = document.getElementById('message-log');
+
+        if (userAns === finalAnswer) {
+            logBox.className = "success";
+            logBox.innerText = `Doğru. Seviye ${currentLevel} tamamlandı.`;
+            currentLevel++;
+        } else {
+            logBox.className = "error";
+            logBox.innerText = `Yanlış. Doğru cevap: ${finalAnswer}. Seviye 1'e dönülüyor.`;
+            currentLevel = 1;
+        }
+
+        resetToNextLoop();
+    }
+
+    function resetToNextLoop() {
+        document.getElementById('input-area').style.display = 'none';
+        document.getElementById('action-btn').style.display = 'inline-block';
+        document.getElementById('action-btn').innerText = `Seviye ${currentLevel}`;
+        updateUI();
+    }
+
+    document.getElementById("user-answer").addEventListener("keyup", function(event) {
+        if (event.key === "Enter") checkAnswer();
+    });
+
+    updateUI();
+</script>
+
+</body>
+</html>
